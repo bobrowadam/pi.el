@@ -127,6 +127,27 @@
   :type '(repeat string)
   :group 'pi)
 
+(defun pi--process-environment ()
+  "Return the environment to use when starting Pi.
+If `pi-executable' includes a directory, prepend that directory to PATH so
+shebangs like `#!/usr/bin/env node' resolve sibling executables first."
+  (let* ((environment (append pi-process-environment process-environment))
+         (executable-directory (file-name-directory pi-executable)))
+    (if (not executable-directory)
+        environment
+      (let* ((executable-directory (expand-file-name executable-directory))
+             (path-prefix "PATH=")
+             (path (or (seq-some (lambda (entry)
+                                   (when (string-prefix-p path-prefix entry)
+                                     (substring entry (length path-prefix))))
+                                 environment)
+                       ""))
+             (environment-without-path
+              (seq-remove (lambda (entry) (string-prefix-p path-prefix entry))
+                          environment)))
+        (cons (concat path-prefix executable-directory path-separator path)
+              environment-without-path)))))
+
 (defcustom pi-log-rpc nil
   "When non-nil, log all RPC JSON to `pi-log-rpc-file'."
   :type 'boolean
@@ -680,7 +701,8 @@ PRED is called with KEY VALUE."
 
 (defun pi-agent-version ()
   (with-temp-buffer
-    (let* ((process-arguments (append pi-flags '("--version")))
+    (let* ((process-environment (pi--process-environment))
+           (process-arguments (append pi-flags '("--version")))
            (command-line (mapconcat #'shell-quote-argument (cons pi-executable process-arguments) " "))
            (exit-code (apply #'call-process pi-executable nil (current-buffer) nil process-arguments)))
       (if (zerop exit-code)
@@ -704,7 +726,7 @@ PRED is called with KEY VALUE."
   (let* ((default-directory (pi-project-root))
          (version (pi-agent-version)))
     (message "(%s) Starting pi version %s..." (pi-project-name) version)
-    (let* ((process-environment (append pi-process-environment process-environment))
+    (let* ((process-environment (pi--process-environment))
            (buf (generate-new-buffer (pi-agent-buffer-name)))
            ;; Use a pipe to communicate with the subprocess. This fixes a hang
            ;; when a >1k message is sent on macOS.
